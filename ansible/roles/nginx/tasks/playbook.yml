@@ -1,0 +1,19 @@
+---
+- name: Base docker setup
+  hosts: app:db
+  become: true
+  roles:
+    - docker
+
+- name: Configure DB
+  hosts: db
+  become: true
+  roles:
+    - db
+
+- name: Configure App + Nginx
+  hosts: app
+  become: true
+  roles:
+    - app
+    - nginx

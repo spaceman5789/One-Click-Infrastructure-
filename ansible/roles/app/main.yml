@@ -1,0 +1,29 @@
+---
+- name: Copy app source
+  copy:
+    src: ../../../../app/
+    dest: /opt/app/
+    mode: "0755"
+
+- name: Build app image
+  community.docker.docker_image:
+    name: testapi
+    tag: latest
+    source: build
+    build:
+      path: /opt/app
+
+- name: Run app container
+  community.docker.docker_container:
+    name: testapi
+    image: testapi:latest
+    state: started
+    restart_policy: always
+    published_ports:
+      - "127.0.0.1:8000:8000"
+    env:
+      DB_HOST: "{{ hostvars[groups['db'][0]].inventory_hostname }}"
+      DB_USER: "app"
+      DB_PASSWORD: "apppass"
+      DB_NAME: "appdb"
+      DB_PORT: "5432"
