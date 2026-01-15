@@ -3,7 +3,6 @@
   apt:
     name:
       - docker.io
-      - docker-compose-plugin
     state: present
     update_cache: true
 
@@ -13,8 +12,8 @@
     enabled: true
     state: started
 
-- name: Add ubuntu user to docker group
+- name: Add debian user to docker group
   user:
-    name: ubuntu
+    name: debian
     groups: docker
     append: true

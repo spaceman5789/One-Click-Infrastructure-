@@ -1,7 +1,7 @@
 ---
 - name: Copy app source
   copy:
-    src: ../../../../app/
+    src: "{{ playbook_dir }}/../app/"
     dest: /opt/app/
     mode: "0755"
 

@@ -2,9 +2,20 @@ terraform {
   required_version = ">= 1.5.0"
 }
 
-variable "template_name" { type = string, default = "tmpl-ubuntu" }
-variable "app_name"      { type = string, default = "app-vm" }
-variable "db_name"       { type = string, default = "db-vm" }
+variable "template_name" {
+  type    = string
+  default = "tmpl-ubuntu"
+}
+
+variable "app_name" {
+  type    = string
+  default = "app-vm"
+}
+
+variable "db_name" {
+  type    = string
+  default = "db-vm"
+}
 
 data "external" "utm" {
   program = ["bash", "${path.module}/../scripts/utm_ensure_vms.sh"]
@@ -25,10 +36,10 @@ resource "local_file" "inventory" {
   filename = "${path.module}/../ansible/inventory.ini"
   content  = <<-EOT
   [app]
-  ${local.app_ip} ansible_user=ubuntu
+  ${local.app_ip} ansible_user=debian
 
   [db]
-  ${local.db_ip} ansible_user=ubuntu
+  ${local.db_ip} ansible_user=debian
 
   [all:vars]
   ansible_python_interpreter=/usr/bin/python3
@@ -43,6 +54,14 @@ resource "null_resource" "destroy_hook" {
 
   provisioner "local-exec" {
     when    = destroy
-    command = "APP_NAME=${var.app_name} DB_NAME=${var.db_name} bash ${path.module}/../scripts/utm_destroy_vms.sh"
+    command = "APP_NAME=${self.triggers.app} DB_NAME=${self.triggers.db} bash ${path.module}/../scripts/utm_destroy_vms.sh"
   }
+}
+
+output "app_ip" {
+  value = local.app_ip
+}
+
+output "db_ip" {
+  value = local.db_ip
 }

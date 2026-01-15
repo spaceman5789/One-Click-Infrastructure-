@@ -1,0 +1,17 @@
+---
+- name: Configure app VM
+  hosts: app
+  become: true
+  gather_facts: true
+  roles:
+    - docker
+    - app
+    - nginx
+
+- name: Configure db VM
+  hosts: db
+  become: true
+  gather_facts: true
+  roles:
+    - docker
+    - db

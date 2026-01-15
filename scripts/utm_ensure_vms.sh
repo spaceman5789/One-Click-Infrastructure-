@@ -1,47 +1,94 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# data.external passes inputs via STDIN JSON; fall back to env/defaults if missing.
+if [[ -z "${TEMPLATE_NAME:-}" || -z "${APP_NAME:-}" || -z "${DB_NAME:-}" ]]; then
+  if [[ ! -t 0 ]]; then
+    assignments="$(
+      /usr/bin/python3 - <<'PY'
+import json, sys
+raw = sys.stdin.read()
+data = json.loads(raw) if raw.strip() else {}
+
+def pick(*keys):
+    for key in keys:
+        value = data.get(key, "")
+        if value:
+            return value
+    return ""
+
+mapping = {
+    "TEMPLATE_NAME": ("TEMPLATE_NAME", "template_name"),
+    "APP_NAME": ("APP_NAME", "app_name"),
+    "DB_NAME": ("DB_NAME", "db_name"),
+}
+
+for env_key, keys in mapping.items():
+    value = pick(*keys)
+    if value:
+        print(f"{env_key}={value}")
+PY
+    )"
+    if [[ -n "$assignments" ]]; then
+      eval "$assignments"
+    fi
+  fi
+fi
+
 TEMPLATE_NAME="${TEMPLATE_NAME:-tmpl-ubuntu}"
 APP_NAME="${APP_NAME:-app-vm}"
 DB_NAME="${DB_NAME:-db-vm}"
+export TEMPLATE_NAME APP_NAME DB_NAME
 
-json=$(/usr/bin/osascript <<'APPLESCRIPT'
-on ensure_vm(vmName, templateName)
-  tell application "UTM"
-    try
-      set vm to virtual machine named vmName
-    on error
-      set tmpl to virtual machine named templateName
-      set vm to duplicate tmpl with properties {configuration:{name:vmName}}
-    end try
+if [[ -z "${TEMPLATE_NAME}" || -z "${APP_NAME}" || -z "${DB_NAME}" ]]; then
+  echo "utm_ensure_vms: missing names TEMPLATE_NAME='${TEMPLATE_NAME}' APP_NAME='${APP_NAME}' DB_NAME='${DB_NAME}'" >&2
+  exit 1
+fi
 
-    -- start if not started
-    if status of vm is not "started" then
-      start vm
-    end if
+utmctl_bin="/Applications/UTM.app/Contents/MacOS/utmctl"
 
-    -- wait until started
-    repeat
-      if status of vm is "started" then exit repeat
-      delay 1
-    end repeat
+ensure_vm() {
+  local vm_name="$1"
+  local template_name="$2"
+  local ip=""
+  local status=""
+  local ip_raw=""
 
-    -- requires QEMU Guest Agent for query ip
-    set ipList to (query ip of vm)
-    set ipAddr to item 1 of ipList
-    return ipAddr
-  end tell
-end ensure_vm
+  if ! "$utmctl_bin" list | tail -n +2 | sed -E 's/^[^[:space:]]+[[:space:]]+[^[:space:]]+[[:space:]]+//' | grep -Fxq "$vm_name"; then
+    "$utmctl_bin" clone "$template_name" --name "$vm_name" --hide >/dev/null
+  fi
 
-set templateName to system attribute "TEMPLATE_NAME"
-set appName to system attribute "APP_NAME"
-set dbName to system attribute "DB_NAME"
+  "$utmctl_bin" start "$vm_name" >/dev/null 2>&1 || true
 
-set appIP to ensure_vm(appName, templateName)
-set dbIP to ensure_vm(dbName, templateName)
+  for _ in {1..120}; do
+    status="$("$utmctl_bin" status "$vm_name" 2>/dev/null || true)"
+    if [[ "$status" == "started" ]]; then
+      break
+    fi
+    sleep 1
+  done
 
-return "{\"app_ip\":\"" & appIP & "\",\"db_ip\":\"" & dbIP & "\"}"
-APPLESCRIPT
-)
+  for _ in {1..60}; do
+    ip_raw="$("$utmctl_bin" ip-address "$vm_name" 2>/dev/null || true)"
+    if grep -qiE 'error from event|guest agent' <<<"$ip_raw"; then
+      ip_raw=""
+    fi
+    ip="$(printf '%s\n' "$ip_raw" | grep -m1 -E '^[0-9]+\\.' || true)"
+    if [[ -z "$ip" ]]; then
+      ip="$(printf '%s\n' "$ip_raw" | head -n1 | tr -d '\r')"
+    fi
+    if [[ -n "$ip" ]]; then
+      echo "$ip"
+      return 0
+    fi
+    sleep 2
+  done
 
-echo "$json"
+  echo "no IP from guest agent for ${vm_name}" >&2
+  return 1
+}
+
+app_ip="$(ensure_vm "$APP_NAME" "$TEMPLATE_NAME")"
+db_ip="$(ensure_vm "$DB_NAME" "$TEMPLATE_NAME")"
+
+printf '{"app_ip":"%s","db_ip":"%s"}\n' "$app_ip" "$db_ip"
